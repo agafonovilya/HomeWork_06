@@ -4,14 +4,16 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import io.reactivex.Observable
 import io.reactivex.android.schedulers.AndroidSchedulers
 import io.reactivex.disposables.Disposable
 import io.reactivex.schedulers.Schedulers
+import java.util.concurrent.TimeUnit
 
 class CatsViewModel(
-    catsService: CatsService,
-    localCatFactsGenerator: LocalCatFactsGenerator,
-    resourceManager: ResourceManager
+    private val catsService: CatsService,
+    private val localCatFactsGenerator: LocalCatFactsGenerator,
+    private val resourceManager: ResourceManager
 ) : ViewModel() {
 
     private val _catsLiveData = MutableLiveData<Result>()
@@ -20,26 +22,40 @@ class CatsViewModel(
     private var catsServiceDisposable: Disposable? = null
 
     init {
-        catsServiceDisposable = catsService.getCatFact()
+        getFacts()
+    }
+
+    private fun getFacts() {
+        catsServiceDisposable = Observable.interval(2, TimeUnit.SECONDS)
+            .switchMapSingle {
+                catsService.getCatFact()
+                    .timeout(2, TimeUnit.SECONDS)
+                    .map { response ->
+                        val fact = response.body()
+                        if (response.isSuccessful && fact != null) {
+                            fact
+                        } else {
+                            throw NoCatsFactException(
+                                response.errorBody()?.string() ?: resourceManager.getString(
+                                    R.string.default_error_text
+                                )
+                            )
+                        }
+                    }
+                    .onErrorResumeNext { _ -> localCatFactsGenerator.generateCatFact() }
+            }
             .subscribeOn(Schedulers.io())
             .observeOn(AndroidSchedulers.mainThread())
             .subscribe(
-                { response ->
-                    if (response.isSuccessful && response.body() != null) {
-                        _catsLiveData.value = Success(response.body()!!)
+                { fact -> _catsLiveData.value = Result.Success(fact) },
+                { th ->
+                    if (th is NoCatsFactException) {
+                        _catsLiveData.value = Result.Error(th.message.orEmpty())
                     } else {
-                        _catsLiveData.value = Error(
-                            response.errorBody()?.string() ?: resourceManager.getString(
-                                R.string.default_error_text
-                            )
-                        )
+                        _catsLiveData.value = Result.ServerError
                     }
-                },
-                { _catsLiveData.value = ServerError }
-            )
+                })
     }
-
-    fun getFacts() {}
 
     override fun onCleared() {
         super.onCleared()
@@ -58,7 +74,8 @@ class CatsViewModelFactory(
         CatsViewModel(catsRepository, localCatFactsGenerator, resourceManager) as T
 }
 
-sealed class Result
-data class Success(val fact: Fact) : Result()
-data class Error(val message: String) : Result()
-object ServerError : Result()
+sealed class Result {
+    data class Success(val fact: Fact) : Result()
+    data class Error(val message: String) : Result()
+    object ServerError : Result()
+}
