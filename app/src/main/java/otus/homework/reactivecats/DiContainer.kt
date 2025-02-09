@@ -5,7 +5,7 @@ import retrofit2.Retrofit
 import retrofit2.adapter.rxjava2.RxJava2CallAdapterFactory
 import retrofit2.converter.gson.GsonConverterFactory
 
-class DiContainer(private val context: Context) {
+class DiContainer(context: Context) {
 
     private val retrofit by lazy {
         Retrofit.Builder()
@@ -19,5 +19,5 @@ class DiContainer(private val context: Context) {
 
     val resourceManager = ResourceManager(context)
 
-    fun localCatFactsGenerator(context: Context) = LocalCatFactsGenerator(context)
+    val localCatFactsGenerator = LocalCatFactsGenerator(resourceManager)
 }
